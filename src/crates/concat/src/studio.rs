@@ -46,7 +46,7 @@ use concat_project::{Command, PlayheadSide};
 
 mod backdrop;
 mod consolidate;
-use consolidate::MergeJob;
+use consolidate::{MergeCheck, MergeJob};
 mod masking;
 use masking::{MaskFrame, MaskGrip};
 use slint::{Model, ModelRc, SharedString, VecModel};
@@ -924,6 +924,9 @@ pub struct Studio {
     /// Counts every change to the document. What the flattened clip list
     /// below is keyed on, so a frame of an unchanged document reuses it.
     revision: u64,
+    /// The last consolidation check, with the revision, timeline and
+    /// selection it was made from. See `consolidation_refusal`.
+    merge_check: RefCell<Option<MergeCheck>>,
     /// The last flattening of the document for the monitor - titles
     /// included - and the revision and output size it was made at. Shared
     /// with the monitor by pointer, so it can keep its plan for as long as
@@ -2309,6 +2312,7 @@ impl Studio {
             media_jump: 0,
             audition: None,
             revision: 0,
+            merge_check: RefCell::new(None),
             flat: None,
             commit_pending: false,
             commit_targets: Vec::new(),

@@ -16,6 +16,21 @@ pub(super) struct MergeJob {
     progress: f32,
 }
 
+/// A consolidation check's answer, with the document it was made from.
+pub(super) struct MergeCheck {
+    revision: u64,
+    timeline: String,
+    selection: Vec<String>,
+    refusal: Option<String>,
+}
+
+impl MergeCheck {
+    /// Whether the answer was made from the document as it now stands.
+    fn is_current(&self, revision: u64, timeline: &str, selection: &[String]) -> bool {
+        self.revision == revision && self.timeline == timeline && self.selection == selection
+    }
+}
+
 /// Removes an unadopted render even when its project was closed before
 /// the worker's callback arrived. Successful edits keep the generated media
 /// through undo/redo and across cache clearing.
@@ -47,9 +62,35 @@ impl Studio {
         }) {
             return Some(t("studio.mergeTrackLocked"));
         }
-        consolidation_clips(self.timeline(), &self.selection)
+        self.consolidation_refusal()
+    }
+
+    /// Why the selection cannot be consolidated, from the document. The
+    /// publish that runs on every tick asks this, so the answer is kept
+    /// while the document, the active timeline and the selection stay as
+    /// they were. The echo is a preview copy the revision does not cover,
+    /// so while one is set nothing is kept.
+    fn consolidation_refusal(&self) -> Option<String> {
+        let timeline = &self.project().active_timeline_id;
+        let keep = self.echo.is_none();
+        if keep
+            && let Some(check) = self.merge_check.borrow().as_ref()
+            && check.is_current(self.revision, timeline, &self.selection)
+        {
+            return check.refusal.clone();
+        }
+        let refusal = consolidation_clips(self.timeline(), &self.selection)
             .err()
-            .map(|error| error.to_string())
+            .map(|error| error.to_string());
+        if keep {
+            *self.merge_check.borrow_mut() = Some(MergeCheck {
+                revision: self.revision,
+                timeline: timeline.clone(),
+                selection: self.selection.clone(),
+                refusal: refusal.clone(),
+            });
+        }
+        refusal
     }
 
     pub(super) fn merge_label(&self) -> String {
@@ -184,6 +225,21 @@ impl Studio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_is_current_only_for_the_document_it_was_made_from() {
+        let selection = vec!["a".to_owned(), "b".to_owned()];
+        let check = MergeCheck {
+            revision: 4,
+            timeline: "main".to_owned(),
+            selection: selection.clone(),
+            refusal: None,
+        };
+        assert!(check.is_current(4, "main", &selection));
+        assert!(!check.is_current(5, "main", &selection), "an edit since");
+        assert!(!check.is_current(4, "other", &selection), "another timeline");
+        assert!(!check.is_current(4, "main", &selection[..1]), "another selection");
+    }
 
     #[test]
     fn unadopted_render_is_removed_but_adopted_media_survives() {
